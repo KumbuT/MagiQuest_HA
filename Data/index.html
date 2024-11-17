@@ -1,0 +1,86 @@
+<!doctypehtml>
+    <title>Device Setup</title>
+    <meta content="width=device-width,initial-scale=1" name=viewport>
+
+    <head>
+        <style>
+            body {
+                color: #fff;
+                background-color: #141414;
+                font-family: Helvetica, Verdana, Arial, sans-serif
+            }
+
+            h1 {
+                text-align: center
+            }
+
+            p {
+                text-align: center
+            }
+
+            div {
+                margin: 5%;
+                background-color: #242424;
+                padding: 10px;
+                border-radius: 8px
+            }
+
+            br {
+                display: block;
+                margin: 10px 0;
+                line-height: 22px;
+                content: " "
+            }
+
+            label {
+                text-align: center;
+                padding: 2%
+            }
+
+            input,
+            select {
+                border-radius: 4px;
+                border: 2px solid #0056a8;
+                width: 90%;
+                padding: 10px;
+                display: block;
+                margin-right: auto;
+                margin-left: auto
+            }
+
+            input[type=submit] {
+                font-size: 25px;
+                background-color: #0056a8;
+                color: #fff;
+                border-radius: 8px;
+                height: 50px;
+                width: 95%
+            }
+        </style>
+        <script src="/jquery-3.7.1.min.js"></script>
+        <script>
+            $(document).ready(function () {
+                $.getJSON("/availablenetworks", function (data, status, xhr) {
+                    //alert(data);
+                    //let networks = $.parseJSON(data);
+                    $.each(data,
+                        function (index, val) { $("#wifissid").append("<option value='" + val + "'>" + val + "</option>"); }
+                    )
+                })
+            });
+        </script>
+    </head>
+    <body>
+        <div>
+            <h1>Device Setup</h1>
+            <p>Please enter the following details to setup your device:
+            <form action=/get><label>Wi-Fi Details</label>
+                <br>
+                <select id=wifissid name=wifissid></select>
+                <br>
+                <input type=password id=wifipass name=wifipass placeholder="Wi-Fi Password" />
+                <br>
+                <input type=submit value=Submit />
+            </form>
+        </div>
+    </body>
