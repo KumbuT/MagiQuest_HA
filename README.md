@@ -9,7 +9,8 @@ This project allows you to use a MagiQuest wand to trigger various home automati
 - HTTP GET and POST requests to Home Automation server
 - LED feedback for status indication
 - IR receiver for capturing wand signals
-- Installation
+
+## Installation
 - Hardware Requirements
   - ESP32 microcontroller
   - IR receiver module
