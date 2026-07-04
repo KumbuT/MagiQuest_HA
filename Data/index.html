@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+    <title>Device Setup</title>
+    <meta content="width=device-width,initial-scale=1" name="viewport">
+    <style>
+        body { color: #fff; background-color: #141414; font-family: Helvetica, Verdana, Arial, sans-serif; }
+        h1, p { text-align: center; }
+        .card { margin: 5%; background-color: #242424; padding: 16px; border-radius: 8px; }
+        label { display: block; margin: 8px auto 4px auto; width: 90%; }
+        input, select, button {
+            border-radius: 4px; border: 2px solid #0056a8; width: 90%; padding: 10px;
+            display: block; margin: 0 auto 10px auto; background: #0f0f0f; color: #fff;
+        }
+        button { background: #0056a8; font-size: 18px; }
+        .status { margin: 10px auto; width: 90%; padding: 10px; border-radius: 6px; background: #1c1c1c; }
+        .ok { border: 1px solid #2a8f3a; }
+        .err { border: 1px solid #a83d3d; }
+        a { color: #8cc8ff; }
+    </style>
+    <script src="/jquery-3.7.1.min.js"></script>
+    <script>
+        let wifiStatusPollTimer = null;
+
+        function showStatus(message, ok) {
+            const status = $("#status");
+            status.removeClass("ok err");
+            status.addClass(ok ? "ok" : "err");
+            status.html(message);
+        }
+
+        function stopWifiPolling() {
+            if (wifiStatusPollTimer !== null) {
+                clearInterval(wifiStatusPollTimer);
+                wifiStatusPollTimer = null;
+            }
+        }
+
+        function startWifiPolling() {
+            stopWifiPolling();
+            wifiStatusPollTimer = setInterval(function () {
+                $.getJSON("/wifi/status", function (resp) {
+                    if (resp.in_progress) {
+                        showStatus(resp.message || "Testing WiFi connection. Please wait...", true);
+                        return;
+                    }
+
+                    stopWifiPolling();
+                    if (resp.success) {
+                        const nextUrl = resp.hostname_url || ("http://" + resp.ip);
+                        showStatus("Connected. Finalizing network transition...", true);
+                        $.ajax({
+                            url: "/wifi/finalize",
+                            method: "POST",
+                            success: function () {
+                                showStatus(
+                                    "Connected successfully.<br>Device IP: <b>" + resp.ip + "</b><br>AP is now shutting down.<br>Next: connect your phone/laptop to your home WiFi, then open <a href='" + nextUrl + "' target='_blank'>" + nextUrl + "</a>.",
+                                    true
+                                );
+                            },
+                            error: function () {
+                                showStatus(
+                                    "Connected successfully.<br>Device IP: <b>" + resp.ip + "</b><br>Could not confirm AP shutdown from browser, but setup is complete.<br>Next: connect to home WiFi and open <a href='" + nextUrl + "' target='_blank'>" + nextUrl + "</a>.",
+                                    true
+                                );
+                            }
+                        });
+                    } else {
+                        showStatus(resp.message || "Connection failed.", false);
+                    }
+                }).fail(function () {
+                    stopWifiPolling();
+                    showStatus("Unable to read WiFi status. Please retry.", false);
+                });
+            }, 1200);
+        }
+
+        $(document).ready(function () {
+            $.getJSON("/availablenetworks", function (data) {
+                $("#wifissid").empty();
+                $.each(data, function (_index, val) {
+                    $("#wifissid").append("<option value='" + val + "'>" + val + "</option>");
+                });
+            });
+
+            $("#wifiForm").on("submit", function (e) {
+                e.preventDefault();
+                const ssid = $("#wifissid").val();
+                const pass = $("#wifipass").val();
+                if (!ssid) {
+                    showStatus("Please choose a WiFi network.", false);
+                    return;
+                }
+
+                showStatus("Testing WiFi connection. Please wait...", true);
+                $.ajax({
+                    url: "/wifi/connect",
+                    method: "POST",
+                    data: { wifissid: ssid, wifipass: pass },
+                    success: function (resp) {
+                        if (resp.in_progress) {
+                            startWifiPolling();
+                            return;
+                        }
+
+                        if (resp.success) {
+                            const nextUrl = resp.hostname_url || ("http://" + resp.ip);
+                            showStatus(
+                                "Connected successfully.<br>Device IP: <b>" + resp.ip + "</b><br>Try: <a href='" + nextUrl + "' target='_blank'>" + nextUrl + "</a><br>Now connect your phone/laptop to the same WiFi and open that address.",
+                                true
+                            );
+                        } else {
+                            showStatus(resp.message || "Connection failed.", false);
+                        }
+                    },
+                    error: function () {
+                        stopWifiPolling();
+                        showStatus("Connection request failed. Please retry.", false);
+                    }
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="card">
+        <h1>WiFi Setup</h1>
+        <p>Connect device to your WiFi first.</p>
+        <form id="wifiForm" method="post" action="/wifi/connect">
+            <label for="wifissid">WiFi SSID</label>
+            <select id="wifissid" name="wifissid"></select>
+            <label for="wifipass">WiFi Password</label>
+            <input type="password" id="wifipass" name="wifipass" placeholder="WiFi Password">
+            <button type="submit">Connect</button>
+        </form>
+        <div id="status" class="status">Waiting for input.</div>
+    </div>
+</body>
+</html>

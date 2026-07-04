@@ -1,0 +1,241 @@
+<!doctype html>
+<html>
+<head>
+    <title>Device Configuration</title>
+    <meta content="width=device-width,initial-scale=1" name="viewport">
+    <style>
+        body { color: #fff; background-color: #141414; font-family: Helvetica, Verdana, Arial, sans-serif; }
+        h1 { text-align: center; }
+        h2 { margin-top: 20px; }
+        .card { margin: 4%; background-color: #242424; padding: 14px; border-radius: 8px; }
+        label { display: block; margin: 8px 0 4px 0; }
+        input, select, button {
+            border-radius: 4px; border: 2px solid #0056a8; width: 100%;
+            padding: 10px; box-sizing: border-box; background: #111; color: #fff;
+        }
+        button { background: #0056a8; margin-top: 10px; }
+        #submitConfig[disabled] { opacity: 0.5; cursor: not-allowed; }
+        .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+        .status { margin-top: 10px; padding: 10px; border-radius: 6px; background: #1c1c1c; }
+        .ok { border: 1px solid #2a8f3a; }
+        .err { border: 1px solid #a83d3d; }
+        @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+    </style>
+    <script src="/jquery-3.7.1.min.js"></script>
+    <script>
+        let lights = [];
+        let testPassed = false;
+
+        function normalizeLights(rawLights) {
+            if (!rawLights) {
+                return [];
+            }
+            if (Array.isArray(rawLights)) {
+                return rawLights;
+            }
+            if (typeof rawLights === "object") {
+                return Object.values(rawLights);
+            }
+            return [];
+        }
+
+        function setStatus(msg, ok) {
+            const el = $("#status");
+            el.removeClass("ok err");
+            el.addClass(ok ? "ok" : "err");
+            el.html(msg);
+        }
+
+        function loadLightsFromDeviceProxy() {
+            const token = ($("#token").val() || "").trim();
+            const haurl = ($("#haurl").val() || "").trim();
+
+            if (!token || !haurl) {
+                lights = [];
+                $(".lightSelect").each(function () { fillLightOptions(this, $(this).val()); });
+                setStatus("HA test successful, but token or URL is missing for entity load.", false);
+                return;
+            }
+
+            $.ajax({
+                url: "/ha/lights",
+                method: "POST",
+                data: { token: token, haurl: haurl },
+                success: function (resp) {
+                    if (!resp.success) {
+                        lights = [];
+                        $(".lightSelect").each(function () { fillLightOptions(this, $(this).val()); });
+                        setStatus("HA test successful, but entity load failed: " + (resp.message || "Unknown error"), false);
+                        return;
+                    }
+
+                    lights = normalizeLights(resp.lights);
+                    $(".lightSelect").each(function () { fillLightOptions(this, $(this).val()); });
+
+                    if (lights.length > 0) {
+                        setStatus("HA test successful. " + lights.length + " light entities loaded.", true);
+                    } else {
+                        setStatus("HA test successful, but no light entities were found in Home Assistant.", false);
+                    }
+                },
+                error: function () {
+                    lights = [];
+                    $(".lightSelect").each(function () { fillLightOptions(this, $(this).val()); });
+                    setStatus("HA test successful, but /ha/lights request failed.", false);
+                }
+            });
+        }
+
+        function applyHaTestResult(resp) {
+            if (resp.success) {
+                testPassed = true;
+                $("#submitConfig").prop("disabled", false);
+                setStatus(resp.message || "Connection successful. Loading light entities...", true);
+                loadLightsFromDeviceProxy();
+            } else {
+                testPassed = false;
+                $("#submitConfig").prop("disabled", true);
+                setStatus(resp.message || "HA test failed", false);
+            }
+        }
+
+        function fillLightOptions(selector, selectedValue) {
+            const select = $(selector);
+            select.empty();
+            select.append("<option value=''>Select light</option>");
+            lights.forEach(function (item) {
+                const sel = item === selectedValue ? " selected" : "";
+                select.append("<option value='" + item + "'" + sel + ">" + item + "</option>");
+            });
+        }
+
+        function renderMappingRows(existingMappings) {
+            const container = $("#wandMappings");
+            container.empty();
+
+            for (let i = 0; i < 10; i++) {
+                const row = $("<div class='row'></div>");
+                const existing = existingMappings[i] || {};
+                row.append("<input name='wand_id_" + i + "' placeholder='Wand ID (number)' value='" + (existing.wand_id || "") + "'>");
+                row.append("<select name='wand_action_" + i + "'><option value=''>Action</option><option value='toggle'>Toggle</option><option value='turn_on'>Turn On</option><option value='turn_off'>Turn Off</option></select>");
+                row.append("<select name='wand_entity_" + i + "' class='lightSelect'><option value=''>Select light</option></select>");
+                container.append(row);
+
+                row.find("select[name='wand_action_" + i + "']").val(existing.action || "");
+            }
+
+            $(".lightSelect").each(function (idx) {
+                const existing = existingMappings[idx] || {};
+                fillLightOptions(this, existing.entity_id || "");
+            });
+        }
+
+        function loadConfig() {
+            $.getJSON("/getconfigs", function (cfg) {
+                $("#hostname").val(cfg.hostname || "");
+                $("#MAC").val(cfg.MAC || "");
+                $("#wifissid").val(cfg.ssid || "");
+                $("#wifipass").val(cfg.password || "");
+                $("#token").val(cfg.token || "");
+                $("#haurl").val(cfg.haurl || "");
+                $("#ip").val(cfg.ip || "");
+
+                const existing = [];
+                if (cfg.mappings) {
+                    for (let i = 0; i < cfg.mappings.length; i++) {
+                        existing.push(cfg.mappings[i]);
+                    }
+                }
+                renderMappingRows(existing);
+            });
+        }
+
+        $(document).ready(function () {
+            loadConfig();
+
+            $("#showpassword").on("change", function () {
+                $("#wifipass").attr("type", this.checked ? "text" : "password");
+            });
+
+            $("#testHa").on("click", function () {
+                const token = $("#token").val();
+                const haurl = $("#haurl").val();
+                if (!token || !haurl) {
+                    setStatus("Enter token and Home Assistant URL first.", false);
+                    return;
+                }
+
+                setStatus("Testing Home Assistant access...", true);
+                $.ajax({
+                    url: "/ha/test",
+                    method: "POST",
+                    data: { token: token, haurl: haurl },
+                    success: function (resp) {
+                        applyHaTestResult(resp);
+                    },
+                    error: function () {
+                        testPassed = false;
+                        $("#submitConfig").prop("disabled", true);
+                        setStatus("HA test request failed.", false);
+                    }
+                });
+            });
+
+            $("#configForm").on("submit", function (e) {
+                e.preventDefault();
+                if (!testPassed) {
+                    setStatus("Run a successful HA test before submitting.", false);
+                    return;
+                }
+
+                $.ajax({
+                    url: "/savesettings",
+                    method: "POST",
+                    data: $(this).serialize(),
+                    success: function () {
+                        setStatus("Settings saved. Device is ready to process IR actions.", true);
+                    },
+                    error: function () {
+                        setStatus("Failed to save settings.", false);
+                    }
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="card">
+        <h1>Device Configuration</h1>
+        <form id="configForm" method="post" action="/savesettings">
+            <h2>Device</h2>
+            <label for="hostname">Device Name</label>
+            <input id="hostname" name="hostname">
+            <label for="MAC">MAC</label>
+            <input id="MAC" readonly>
+            <label for="ip">Current IP</label>
+            <input id="ip" readonly>
+
+            <h2>WiFi</h2>
+            <label for="wifissid">SSID</label>
+            <input id="wifissid" readonly>
+            <label for="wifipass">Password</label>
+            <input id="wifipass" type="password" readonly>
+            <label><input type="checkbox" id="showpassword" style="width:auto;display:inline-block;"> Show Password</label>
+
+            <h2>Home Assistant</h2>
+            <label for="token">Access Token</label>
+            <input id="token" name="token" placeholder="Long-lived access token">
+            <label for="haurl">Home Assistant URL</label>
+            <input id="haurl" name="haurl" placeholder="http://homeassistant.local:8123">
+            <button type="button" id="testHa">Test Token and URL</button>
+
+            <h2>Magic Quest Wand Actions (up to 10)</h2>
+            <p>One action per wand ID.</p>
+            <div id="wandMappings"></div>
+
+            <button id="submitConfig" type="submit" disabled>Save Configuration</button>
+        </form>
+        <div id="status" class="status">Run HA test to unlock submit.</div>
+    </div>
+</body>
+</html>
