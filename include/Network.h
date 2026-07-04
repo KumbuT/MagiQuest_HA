@@ -79,6 +79,18 @@ inline String getDeviceStatusJson() {
 	return JSON.stringify(status);
 }
 
+inline String getLastSeenWandJson() {
+	JSONVar status;
+	status["success"] = true;
+	status["seen"] = hasLastDetectedWand;
+	if (hasLastDetectedWand) {
+		status["wand_id"] = (double)lastDetectedWandId;
+		status["magnitude"] = lastDetectedMagnitude;
+		status["age_ms"] = (double)(millis() - lastDetectedAtMs);
+	}
+	return JSON.stringify(status);
+}
+
 inline String getWiFiJoinStatusJson() {
 	JSONVar status;
 	status["in_progress"] = wifiJoinInProgress;
@@ -264,6 +276,13 @@ inline void setupServer() {
 		request->send(200, "application/json", getDeviceStatusJson());
 	});
 
+	server.on("/wand/last", HTTP_GET, [](AsyncWebServerRequest *request) {
+		if (!ensureConfigAuth(request)) {
+			return;
+		}
+		request->send(200, "application/json", getLastSeenWandJson());
+	});
+
 	server.on("/wifi/status", HTTP_GET, [](AsyncWebServerRequest *request) {
 		request->send(200, "application/json", getWiFiJoinStatusJson());
 	});
@@ -288,12 +307,12 @@ inline void setupServer() {
 
 	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
 		if (isCaptiveMode()) {
-			request->send(LittleFS, "/index.html", "text/html", false);
+			request->send(LittleFS, "/sta-index.html", "text/html", false);
 		} else {
 			if (!ensureConfigAuth(request)) {
 				return;
 			}
-		  request->send(LittleFS, "/sta-index.html", "text/html", false);
+		  request->send(LittleFS, "/index.html", "text/html", false);
 		}
 	});
 
@@ -382,16 +401,25 @@ inline void setupServer() {
 		if (!ensureConfigAuth(request)) {
 			return;
 		}
-		String token = postParam(request, "token");
-		String haurl = postParam(request, "haurl");
+		String token = normalizeHaToken(postParam(request, "token"));
+		String haurl = normalizeHaUrl(postParam(request, "haurl"));
 		String host = postParam(request, "hostname");
+		bool haValidatedForSubmittedValues = postParam(request, "ha_validated") == "1";
+		String previousToken = normalizeHaToken(preferences.getString("token", ""));
+		String previousHaUrl = normalizeHaUrl(preferences.getString("haurl", ""));
+		bool haCredentialsChanged = !areHaCredentialsEqual(haurl, token, previousHaUrl, previousToken);
+		bool haValidated = isHaConfigValidated();
 
-		if (token.length() > 0) {
-			preferences.putString("token", token);
+		preferences.putString("token", token);
+		preferences.putString("haurl", haurl);
+		if (token.length() == 0 || haurl.length() == 0) {
+			haValidated = false;
+		} else if (haCredentialsChanged) {
+			haValidated = haValidatedForSubmittedValues;
+		} else if (haValidatedForSubmittedValues) {
+			haValidated = true;
 		}
-		if (haurl.length() > 0) {
-			preferences.putString("haurl", haurl);
-		}
+		setHaConfigValidated(haValidated);
 		if (host.length() > 0) {
 			preferences.putString("hostname", host);
 			hostname = host;

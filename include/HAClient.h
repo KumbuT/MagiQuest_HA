@@ -9,6 +9,34 @@
 
 static JSONVar haConfig;
 static const uint8_t MAX_WAND_MAPPINGS = 10;
+static const char *HA_VALIDATED_KEY = "ha_validated";
+
+inline String normalizeHaToken(const String &token) {
+	String cleanedToken = token;
+	cleanedToken.trim();
+	return cleanedToken;
+}
+
+inline String normalizeHaUrl(const String &serverName) {
+	String cleanedUrl = serverName;
+	cleanedUrl.trim();
+	if (cleanedUrl.endsWith("/")) {
+		cleanedUrl.remove(cleanedUrl.length() - 1);
+	}
+	return cleanedUrl;
+}
+
+inline bool areHaCredentialsEqual(const String &leftUrl, const String &leftToken, const String &rightUrl, const String &rightToken) {
+	return normalizeHaUrl(leftUrl) == normalizeHaUrl(rightUrl) && normalizeHaToken(leftToken) == normalizeHaToken(rightToken);
+}
+
+inline bool isHaConfigValidated() {
+	return preferences.getBool(HA_VALIDATED_KEY, false);
+}
+
+inline void setHaConfigValidated(bool validated) {
+	preferences.putBool(HA_VALIDATED_KEY, validated);
+}
 
 inline String wandIdKey(uint8_t slot) {
 	return String("wand_id_") + slot;
@@ -58,13 +86,8 @@ inline bool isActionValid(const String &action) {
 }
 
 inline bool fetchHaLights(const String &serverName, const String &token, String &lightsJson, String &errorText) {
-	String cleanedUrl = serverName;
-	String cleanedToken = token;
-	cleanedUrl.trim();
-	cleanedToken.trim();
-	if (cleanedUrl.endsWith("/")) {
-		cleanedUrl.remove(cleanedUrl.length() - 1);
-	}
+	String cleanedUrl = normalizeHaUrl(serverName);
+	String cleanedToken = normalizeHaToken(token);
 	if (cleanedUrl.length() == 0 || cleanedToken.length() == 0) {
 		errorText = "Empty Home Assistant URL or token";
 		return false;
@@ -149,13 +172,8 @@ inline bool testHaConnection(const String &serverName, const String &token, Stri
 		return false;
 	}
 
-	String cleanedUrl = serverName;
-	String cleanedToken = token;
-	cleanedUrl.trim();
-	cleanedToken.trim();
-	if (cleanedUrl.endsWith("/")) {
-		cleanedUrl.remove(cleanedUrl.length() - 1);
-	}
+	String cleanedUrl = normalizeHaUrl(serverName);
+	String cleanedToken = normalizeHaToken(token);
 	if (cleanedUrl.length() == 0 || cleanedToken.length() == 0) {
 		errorText = "Empty Home Assistant URL or token";
 		return false;
@@ -267,6 +285,7 @@ inline void loadHaConfig() {
 	haConfig["hostname"] = (String)preferences.getString("hostname", hostname);
 	haConfig["MAC"] = (String)WiFi.macAddress();
 	haConfig["ip"] = (String)WiFi.localIP().toString();
+	haConfig["ha_validated"] = isHaConfigValidated();
 
 	JSONVar mappings;
 	int mapIndex = 0;

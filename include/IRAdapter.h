@@ -13,12 +13,26 @@ inline bool IrDecodeAvailable() {
 	return IrReceiver.decode();
 }
 
+inline bool IrIsMagiQuest() {
+	return IrReceiver.decodedIRData.protocol == MAGIQUEST;
+}
+
 inline uint16_t IrGetMagnitude() {
 	return IrReceiver.decodedIRData.command;
 }
 
-inline uint16_t IrGetWandID() {
+inline uint32_t IrGetWandID() {
+	if (IrIsMagiQuest()) {
+		return (uint32_t)IrReceiver.decodedIRData.decodedRawData;
+	}
 	return IrReceiver.decodedIRData.address;
+}
+
+inline void IrRememberLastSeenWand() {
+	lastDetectedWandId = IrGetWandID();
+	lastDetectedMagnitude = IrGetMagnitude();
+	lastDetectedAtMs = millis();
+	hasLastDetectedWand = true;
 }
 
 inline void IrResume() {
@@ -30,7 +44,7 @@ inline void printIrReceiver() {
 	Serial.print("Protocol = ");
 	Serial.println(IrReceiver.decodedIRData.protocol);
 	Serial.print("WandID = ");
-	Serial.println(IrReceiver.decodedIRData.address);
+	Serial.println(IrGetWandID());
 	Serial.print("Magnitude = ");
 	Serial.println(IrReceiver.decodedIRData.command, DEC);
 	Serial.println("-----------------------------RECV END-----------------------------");

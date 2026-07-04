@@ -47,12 +47,17 @@ void setup() {
 void loop() {
   NetworkTick();
   if (IrDecodeAvailable()) {
-    uint16_t swingMagnitude = IrGetMagnitude();
-    printIrReceiver();
-    if (swingMagnitude > 10) {
-      callHA();
-      blink_LED("SLOW");
-      // Call HA API if it was intentional swing
+    if (IrIsMagiQuest()) {
+      uint16_t swingMagnitude = IrGetMagnitude();
+      IrRememberLastSeenWand();
+      printIrReceiver();
+      if (swingMagnitude > 10) {
+      	callHA();
+      	blink_LED("SLOW");
+      	// Call HA API if it was intentional swing
+      }
+    } else {
+      Serial.println("[IR] Ignoring non-MagiQuest signal");
     }
     delay(1000);
     IrResume();

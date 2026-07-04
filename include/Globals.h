@@ -28,5 +28,9 @@ static IPAddress apIP(8, 8, 4, 4);
 static DNSServer dnsServer;
 static AsyncWebServer server(80);
 static String hostname = "HA MagiQuest 1";
+static bool hasLastDetectedWand = false;
+static uint32_t lastDetectedWandId = 0;
+static uint16_t lastDetectedMagnitude = 0;
+static uint32_t lastDetectedAtMs = 0;
 
 #endif // GLOBALS_H

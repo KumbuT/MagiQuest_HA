@@ -1,122 +1,303 @@
-<<<<<<< HEAD
 <!doctype html>
 <html>
 <head>
-    <title>Device Setup</title>
+    <title>Device Configuration</title>
     <meta content="width=device-width,initial-scale=1" name="viewport">
     <style>
         body { color: #fff; background-color: #141414; font-family: Helvetica, Verdana, Arial, sans-serif; }
-        h1, p { text-align: center; }
-        .card { margin: 5%; background-color: #242424; padding: 16px; border-radius: 8px; }
-        label { display: block; margin: 8px auto 4px auto; width: 90%; }
+        h1 { text-align: center; }
+        h2 { margin-top: 20px; }
+        .card { margin: 4%; background-color: #242424; padding: 14px; border-radius: 8px; }
+        label { display: block; margin: 8px 0 4px 0; }
         input, select, button {
-            border-radius: 4px; border: 2px solid #0056a8; width: 90%; padding: 10px;
-            display: block; margin: 0 auto 10px auto; background: #0f0f0f; color: #fff;
+            border-radius: 4px; border: 2px solid #0056a8; width: 100%;
+            padding: 10px; box-sizing: border-box; background: #111; color: #fff;
         }
-        button { background: #0056a8; font-size: 18px; }
-        .status { margin: 10px auto; width: 90%; padding: 10px; border-radius: 6px; background: #1c1c1c; }
+        button { background: #0056a8; margin-top: 10px; }
+        #submitConfig[disabled] { opacity: 0.5; cursor: not-allowed; }
+        .row { display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 8px; margin-bottom: 8px; align-items: end; }
+        .status { margin-top: 10px; padding: 10px; border-radius: 6px; background: #1c1c1c; }
         .ok { border: 1px solid #2a8f3a; }
         .err { border: 1px solid #a83d3d; }
-        a { color: #8cc8ff; }
+        .hint { margin: 6px 0 0 0; color: #bdbdbd; font-size: 0.95rem; }
+        .miniButton { width: auto; min-width: 130px; margin-top: 0; }
+        @media (max-width: 900px) {
+            .row { grid-template-columns: 1fr; }
+            .miniButton { width: 100%; }
+        }
     </style>
     <script src="/jquery-3.7.1.min.js"></script>
     <script>
-        let wifiStatusPollTimer = null;
+        let lights = [];
+        let lastValidatedToken = "";
+        let lastValidatedUrl = "";
+        let lastSeenWandId = "";
+        let lastSeenMagnitude = "";
+        let wandPollTimer = null;
 
-        function showStatus(message, ok) {
-            const status = $("#status");
-            status.removeClass("ok err");
-            status.addClass(ok ? "ok" : "err");
-            status.html(message);
+        function normalizeLights(rawLights) {
+            if (!rawLights) return [];
+            if (Array.isArray(rawLights)) return rawLights;
+            if (typeof rawLights === "object") return Object.values(rawLights);
+            return [];
         }
 
-        function stopWifiPolling() {
-            if (wifiStatusPollTimer !== null) {
-                clearInterval(wifiStatusPollTimer);
-                wifiStatusPollTimer = null;
+        function normalizeToken(value) {
+            return (value || "").trim();
+        }
+
+        function normalizeUrl(value) {
+            const trimmed = (value || "").trim();
+            if (trimmed.endsWith("/")) return trimmed.slice(0, -1);
+            return trimmed;
+        }
+
+        function currentToken() { return normalizeToken($("#token").val()); }
+        function currentUrl() { return normalizeUrl($("#haurl").val()); }
+
+        function setStatus(msg, ok) {
+            const el = $("#status");
+            el.removeClass("ok err").addClass(ok ? "ok" : "err").html(msg);
+        }
+
+        function setWandStatus(msg, ok) {
+            const el = $("#wandStatus");
+            el.removeClass("ok err").addClass(ok ? "ok" : "err").html(msg);
+        }
+
+        function fillLightOptions(selector, selectedValue) {
+            const select = $(selector);
+            let matched = false;
+            select.empty().append("<option value=''>Select light</option>");
+            lights.forEach(function (item) {
+                const sel = item === selectedValue ? " selected" : "";
+                if (sel) matched = true;
+                select.append("<option value='" + item + "'" + sel + ">" + item + "</option>");
+            });
+            if (!matched && selectedValue) {
+                select.append("<option value='" + selectedValue + "' selected>" + selectedValue + " (saved)</option>");
             }
         }
 
-        function startWifiPolling() {
-            stopWifiPolling();
-            wifiStatusPollTimer = setInterval(function () {
-                $.getJSON("/wifi/status", function (resp) {
-                    if (resp.in_progress) {
-                        showStatus(resp.message || "Testing WiFi connection. Please wait...", true);
+        function refreshAllLightSelectors() {
+            $(".lightSelect").each(function () {
+                fillLightOptions(this, $(this).val());
+            });
+        }
+
+        function hasValidatedHaCredentials() {
+            return currentToken().length > 0 && currentUrl().length > 0 &&
+                currentToken() === lastValidatedToken && currentUrl() === lastValidatedUrl;
+        }
+
+        function updateSubmitState() {
+            const validated = hasValidatedHaCredentials();
+            $("#haValidated").val(validated ? "1" : "0");
+            $("#submitConfig").prop("disabled", !validated);
+            return validated;
+        }
+
+        function handleHaCredentialEdit() {
+            if (updateSubmitState()) return;
+            lights = [];
+            refreshAllLightSelectors();
+            if (!currentToken() || !currentUrl()) {
+                setStatus("Enter token and Home Assistant URL, then run the HA test.", false);
+            } else {
+                setStatus("Home Assistant credentials changed. Re-run the HA test to save or reload entities.", false);
+            }
+        }
+
+        function loadLightsFromDeviceProxy() {
+            const token = currentToken();
+            const haurl = currentUrl();
+            if (!token || !haurl) {
+                lights = [];
+                refreshAllLightSelectors();
+                setStatus("Home Assistant credentials are missing.", false);
+                return;
+            }
+            $.ajax({
+                url: "/ha/lights",
+                method: "POST",
+                data: { token: token, haurl: haurl },
+                success: function (resp) {
+                    if (!resp.success) {
+                        lights = [];
+                        refreshAllLightSelectors();
+                        setStatus("HA is validated, but entity loading failed: " + (resp.message || "Unknown error"), false);
                         return;
                     }
-
-                    stopWifiPolling();
-                    if (resp.success) {
-                        const nextUrl = resp.hostname_url || ("http://" + resp.ip);
-                        showStatus("Connected. Finalizing network transition...", true);
-                        $.ajax({
-                            url: "/wifi/finalize",
-                            method: "POST",
-                            success: function () {
-                                showStatus(
-                                    "Connected successfully.<br>Device IP: <b>" + resp.ip + "</b><br>AP is now shutting down.<br>Next: connect your phone/laptop to your home WiFi, then open <a href='" + nextUrl + "' target='_blank'>" + nextUrl + "</a>.",
-                                    true
-                                );
-                            },
-                            error: function () {
-                                showStatus(
-                                    "Connected successfully.<br>Device IP: <b>" + resp.ip + "</b><br>Could not confirm AP shutdown from browser, but setup is complete.<br>Next: connect to home WiFi and open <a href='" + nextUrl + "' target='_blank'>" + nextUrl + "</a>.",
-                                    true
-                                );
-                            }
-                        });
+                    lights = normalizeLights(resp.lights);
+                    refreshAllLightSelectors();
+                    if (lights.length > 0) {
+                        setStatus("Home Assistant validated. " + lights.length + " light entities loaded.", true);
                     } else {
-                        showStatus(resp.message || "Connection failed.", false);
+                        setStatus("Home Assistant validated, but no light entities were found.", false);
                     }
-                }).fail(function () {
-                    stopWifiPolling();
-                    showStatus("Unable to read WiFi status. Please retry.", false);
-                });
-            }, 1200);
+                },
+                error: function () {
+                    lights = [];
+                    refreshAllLightSelectors();
+                    setStatus("Home Assistant validated, but entity loading failed.", false);
+                }
+            });
+        }
+
+        function applyHaTestResult(resp) {
+            if (resp.success) {
+                lastValidatedToken = currentToken();
+                lastValidatedUrl = currentUrl();
+                updateSubmitState();
+                setStatus(resp.message || "Connection successful. Loading light entities...", true);
+                loadLightsFromDeviceProxy();
+            } else {
+                updateSubmitState();
+                setStatus(resp.message || "HA test failed", false);
+            }
+        }
+
+        function renderMappingRows(existingMappings) {
+            const container = $("#wandMappings");
+            container.empty();
+            for (let i = 0; i < 10; i++) {
+                const row = $("<div class='row'></div>");
+                const existing = existingMappings[i] || {};
+                row.append("<input name='wand_id_" + i + "' placeholder='Wand ID (decimal)' value='" + (existing.wand_id || "") + "'>");
+                row.append("<select name='wand_action_" + i + "'><option value=''>Action</option><option value='toggle'>Toggle</option><option value='turn_on'>Turn On</option><option value='turn_off'>Turn Off</option></select>");
+                row.append("<select name='wand_entity_" + i + "' class='lightSelect'><option value=''>Select light</option></select>");
+                row.append("<button type='button' class='miniButton useLastWand' data-slot='" + i + "'>Use last seen</button>");
+                container.append(row);
+                row.find("select[name='wand_action_" + i + "']").val(existing.action || "");
+            }
+            $(".lightSelect").each(function (idx) {
+                const existing = existingMappings[idx] || {};
+                fillLightOptions(this, existing.entity_id || "");
+            });
+        }
+
+        function loadConfig() {
+            $.getJSON("/getconfigs", function (cfg) {
+                $("#hostname").val(cfg.hostname || "");
+                $("#MAC").val(cfg.MAC || "");
+                $("#wifissid").val(cfg.ssid || "");
+                $("#wifipass").val(cfg.password || "");
+                $("#token").val(cfg.token || "");
+                $("#haurl").val(cfg.haurl || "");
+                $("#ip").val(cfg.ip || "");
+                const existing = [];
+                if (cfg.mappings) {
+                    for (let i = 0; i < cfg.mappings.length; i++) {
+                        existing.push(cfg.mappings[i]);
+                    }
+                }
+                renderMappingRows(existing);
+                if (cfg.ha_validated) {
+                    lastValidatedToken = normalizeToken(cfg.token || "");
+                    lastValidatedUrl = normalizeUrl(cfg.haurl || "");
+                } else {
+                    lastValidatedToken = "";
+                    lastValidatedUrl = "";
+                }
+                if (updateSubmitState()) {
+                    setStatus("Saved Home Assistant credentials were already validated. Loading entities...", true);
+                    loadLightsFromDeviceProxy();
+                } else {
+                    setStatus("Run the HA test once for the current Home Assistant URL and token.", false);
+                }
+            });
+        }
+
+        function renderLastSeenWand(resp) {
+            if (!resp || !resp.seen) {
+                lastSeenWandId = "";
+                lastSeenMagnitude = "";
+                setWandStatus("No MagiQuest wand has been detected yet. Swing a wand near the receiver, then use a row's \"Use last seen\" button.", false);
+                return;
+            }
+            lastSeenWandId = String(resp.wand_id);
+            lastSeenMagnitude = String(resp.magnitude);
+            const wandHex = "0x" + Number(resp.wand_id).toString(16).toUpperCase();
+            let ageText = "";
+            if (typeof resp.age_ms !== "undefined") {
+                ageText = " Last seen " + Math.round(resp.age_ms / 1000) + "s ago.";
+            }
+            setWandStatus("Last wand ID: <b>" + lastSeenWandId + "</b> (" + wandHex + "), magnitude: <b>" + lastSeenMagnitude + "</b>." + ageText, true);
+        }
+
+        function refreshLastSeenWand() {
+            $.getJSON("/wand/last", function (resp) {
+                renderLastSeenWand(resp);
+            }).fail(function () {
+                setWandStatus("Unable to read the last detected wand from the device.", false);
+            });
+        }
+
+        function startWandPolling() {
+            refreshLastSeenWand();
+            if (wandPollTimer !== null) clearInterval(wandPollTimer);
+            wandPollTimer = setInterval(refreshLastSeenWand, 1500);
         }
 
         $(document).ready(function () {
-            $.getJSON("/availablenetworks", function (data) {
-                $("#wifissid").empty();
-                $.each(data, function (_index, val) {
-                    $("#wifissid").append("<option value='" + val + "'>" + val + "</option>");
+            loadConfig();
+            startWandPolling();
+
+            $("#showpassword").on("change", function () {
+                $("#wifipass").attr("type", this.checked ? "text" : "password");
+            });
+
+            $("#token, #haurl").on("input", function () {
+                handleHaCredentialEdit();
+            });
+
+            $("#testHa").on("click", function () {
+                const token = currentToken();
+                const haurl = currentUrl();
+                if (!token || !haurl) {
+                    setStatus("Enter token and Home Assistant URL first.", false);
+                    return;
+                }
+                setStatus("Testing Home Assistant access...", true);
+                $.ajax({
+                    url: "/ha/test",
+                    method: "POST",
+                    data: { token: token, haurl: haurl },
+                    success: function (resp) {
+                        applyHaTestResult(resp);
+                    },
+                    error: function () {
+                        updateSubmitState();
+                        setStatus("HA test request failed.", false);
+                    }
                 });
             });
 
-            $("#wifiForm").on("submit", function (e) {
-                e.preventDefault();
-                const ssid = $("#wifissid").val();
-                const pass = $("#wifipass").val();
-                if (!ssid) {
-                    showStatus("Please choose a WiFi network.", false);
+            $(document).on("click", ".useLastWand", function () {
+                if (!lastSeenWandId) {
+                    setWandStatus("No MagiQuest wand has been detected yet. Swing a wand near the receiver first.", false);
                     return;
                 }
+                const slot = $(this).data("slot");
+                $("input[name='wand_id_" + slot + "']").val(lastSeenWandId);
+                setWandStatus("Copied wand ID " + lastSeenWandId + " with magnitude " + lastSeenMagnitude + " into row " + (slot + 1) + ".", true);
+            });
 
-                showStatus("Testing WiFi connection. Please wait...", true);
+            $("#configForm").on("submit", function (e) {
+                e.preventDefault();
+                if ($("#submitConfig").prop("disabled")) {
+                    setStatus("Validate the current Home Assistant URL and token before saving.", false);
+                    return;
+                }
                 $.ajax({
-                    url: "/wifi/connect",
+                    url: "/savesettings",
                     method: "POST",
-                    data: { wifissid: ssid, wifipass: pass },
-                    success: function (resp) {
-                        if (resp.in_progress) {
-                            startWifiPolling();
-                            return;
-                        }
-
-                        if (resp.success) {
-                            const nextUrl = resp.hostname_url || ("http://" + resp.ip);
-                            showStatus(
-                                "Connected successfully.<br>Device IP: <b>" + resp.ip + "</b><br>Try: <a href='" + nextUrl + "' target='_blank'>" + nextUrl + "</a><br>Now connect your phone/laptop to the same WiFi and open that address.",
-                                true
-                            );
-                        } else {
-                            showStatus(resp.message || "Connection failed.", false);
-                        }
+                    data: $(this).serialize(),
+                    success: function () {
+                        setStatus("Settings saved. Device is ready to process wand actions.", true);
                     },
                     error: function () {
-                        stopWifiPolling();
-                        showStatus("Connection request failed. Please retry.", false);
+                        setStatus("Failed to save settings.", false);
                     }
                 });
             });
@@ -125,104 +306,40 @@
 </head>
 <body>
     <div class="card">
-        <h1>WiFi Setup</h1>
-        <p>Connect device to your WiFi first.</p>
-        <form id="wifiForm" method="post" action="/wifi/connect">
-            <label for="wifissid">WiFi SSID</label>
-            <select id="wifissid" name="wifissid"></select>
-            <label for="wifipass">WiFi Password</label>
-            <input type="password" id="wifipass" name="wifipass" placeholder="WiFi Password">
-            <button type="submit">Connect</button>
+        <h1>Device Configuration</h1>
+        <form id="configForm" method="post" action="/savesettings">
+            <input type="hidden" id="haValidated" name="ha_validated" value="0">
+
+            <h2>Device</h2>
+            <label for="hostname">Device Name</label>
+            <input id="hostname" name="hostname">
+            <label for="MAC">MAC</label>
+            <input id="MAC" readonly>
+            <label for="ip">Current IP</label>
+            <input id="ip" readonly>
+
+            <h2>WiFi</h2>
+            <label for="wifissid">SSID</label>
+            <input id="wifissid" readonly>
+            <label for="wifipass">Password</label>
+            <input id="wifipass" type="password" readonly>
+            <label><input type="checkbox" id="showpassword" style="width:auto;display:inline-block;"> Show Password</label>
+
+            <h2>Home Assistant</h2>
+            <label for="token">Access Token</label>
+            <input id="token" name="token" placeholder="Long-lived access token">
+            <label for="haurl">Home Assistant URL</label>
+            <input id="haurl" name="haurl" placeholder="http://homeassistant.local:8123">
+            <button type="button" id="testHa">Test Token and URL</button>
+
+            <h2>Magic Quest Wand Actions (up to 10)</h2>
+            <p class="hint">Map each wand ID to one Home Assistant light action. Use "Use last seen" after swinging a wand near the receiver.</p>
+            <div id="wandStatus" class="status">Waiting for the first MagiQuest wand signal.</div>
+            <div id="wandMappings"></div>
+
+            <button id="submitConfig" type="submit" disabled>Save Configuration</button>
         </form>
-        <div id="status" class="status">Waiting for input.</div>
+        <div id="status" class="status">Run the HA test once for the current Home Assistant URL and token.</div>
     </div>
 </body>
 </html>
-=======
-<!doctypehtml>
-    <title>Device Setup</title>
-    <meta content="width=device-width,initial-scale=1" name=viewport>
-
-    <head>
-        <style>
-            body {
-                color: #fff;
-                background-color: #141414;
-                font-family: Helvetica, Verdana, Arial, sans-serif
-            }
-
-            h1 {
-                text-align: center
-            }
-
-            p {
-                text-align: center
-            }
-
-            div {
-                margin: 5%;
-                background-color: #242424;
-                padding: 10px;
-                border-radius: 8px
-            }
-
-            br {
-                display: block;
-                margin: 10px 0;
-                line-height: 22px;
-                content: " "
-            }
-
-            label {
-                text-align: center;
-                padding: 2%
-            }
-
-            input,
-            select {
-                border-radius: 4px;
-                border: 2px solid #0056a8;
-                width: 90%;
-                padding: 10px;
-                display: block;
-                margin-right: auto;
-                margin-left: auto
-            }
-
-            input[type=submit] {
-                font-size: 25px;
-                background-color: #0056a8;
-                color: #fff;
-                border-radius: 8px;
-                height: 50px;
-                width: 95%
-            }
-        </style>
-        <script src="/jquery-3.7.1.min.js"></script>
-        <script>
-            $(document).ready(function () {
-                $.getJSON("/availablenetworks", function (data, status, xhr) {
-                    //alert(data);
-                    //let networks = $.parseJSON(data);
-                    $.each(data,
-                        function (index, val) { $("#wifissid").append("<option value='" + val + "'>" + val + "</option>"); }
-                    )
-                })
-            });
-        </script>
-    </head>
-    <body>
-        <div>
-            <h1>Device Setup</h1>
-            <p>Please enter the following details to setup your device:
-            <form action=/get><label>Wi-Fi Details</label>
-                <br>
-                <select id=wifissid name=wifissid></select>
-                <br>
-                <input type=password id=wifipass name=wifipass placeholder="Wi-Fi Password" />
-                <br>
-                <input type=submit value=Submit />
-            </form>
-        </div>
-    </body>
->>>>>>> a27d6a9cde421bd796ba54e3ca21ba6f38000286
